@@ -1,4 +1,4 @@
-//go:build !fips
+//go:build fips
 
 // Copyright (c) 2024 Canonical Ltd
 //
@@ -19,14 +19,11 @@ package state
 import (
 	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
-
-	"github.com/GehirnInc/crypt/sha512_crypt"
 )
 
 // Identity holds the configuration of a single identity.
@@ -107,19 +104,15 @@ func (d *Identity) validateAccess() error {
 		gotType = true
 	}
 	if d.Basic != nil {
-		if d.Basic.Password == "" {
-			return errors.New("basic identity must specify password (hashed)")
-		}
-		gotType = true
+		// In FIPS mode, basic authentication is not supported
+		return errors.New("basic authentication is not supported in FIPS mode")
 	}
 	if d.Cert != nil {
-		if d.Cert.X509 == nil {
-			return errors.New("cert identity must include an X.509 certificate")
-		}
-		gotType = true
+		// In FIPS mode, certificate authentication is not supported
+		return errors.New("certificate authentication is not supported in FIPS mode")
 	}
 	if !gotType {
-		return errors.New(`identity must have at least one type ("local", "basic", or "cert")`)
+		return errors.New(`identity must have type "local" (basic and cert auth not supported in FIPS mode)`)
 	}
 
 	return nil
@@ -185,21 +178,12 @@ func (d *Identity) UnmarshalJSON(data []byte) error {
 		identity.Local = &LocalIdentity{UserID: *ai.Local.UserID}
 	}
 	if ai.Basic != nil {
-		identity.Basic = &BasicIdentity{Password: ai.Basic.Password}
+		// In FIPS mode, basic authentication is not supported
+		return errors.New("basic authentication is not supported in FIPS mode")
 	}
 	if ai.Cert != nil {
-		block, rest := pem.Decode([]byte(ai.Cert.PEM))
-		if block == nil {
-			return errors.New("cert identity must include a PEM-encoded certificate")
-		}
-		if len(rest) > 0 {
-			return errors.New("cert identity cannot have extra data after the PEM block")
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return fmt.Errorf("cannot parse certificate from cert identity: %w", err)
-		}
-		identity.Cert = &CertIdentity{X509: cert}
+		// In FIPS mode, certificate authentication is not supported
+		return errors.New("certificate authentication is not supported in FIPS mode")
 	}
 
 	// Perform additional validation using the local Identity type.
@@ -368,43 +352,11 @@ func (s *State) IdentityFromInputs(userID *uint32, username, password string, cl
 
 	switch {
 	case clientCert != nil:
-		for _, identity := range s.identities {
-			if identity.Cert != nil && identity.Cert.X509.Equal(clientCert) {
-				// Certificate identities can be added
-				// manually, so we still need to verify
-				// this was a self-signed client identity
-				// certificate without intermediaries.
-				roots := x509.NewCertPool()
-				roots.AddCert(identity.Cert.X509)
-				opts := x509.VerifyOptions{
-					Roots: roots,
-					// We only support verifying client TLS certificates.
-					KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-				}
-				_, err := clientCert.Verify(opts)
-				if err == nil {
-					return identity
-				}
-			}
-		}
-		// If a client certificate is provided, but did not match, we bail.
+		// Certificate authentication is not supported in FIPS mode
 		return nil
 
 	case username != "" || password != "":
-		passwordBytes := []byte(password)
-		for _, identity := range s.identities {
-			if identity.Basic == nil || identity.Name != username {
-				continue
-			}
-			crypt := sha512_crypt.New()
-			err := crypt.Verify(identity.Basic.Password, passwordBytes)
-			if err == nil {
-				return identity
-			}
-			// No further username match possible.
-			break
-		}
-		// If basic auth credentials were provided, but did not match, we bail.
+		// Basic authentication is not supported in FIPS mode
 		return nil
 
 	case userID != nil:
