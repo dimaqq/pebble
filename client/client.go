@@ -17,11 +17,8 @@ package client
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -655,10 +652,8 @@ func newDefaultRequester(client *Client, opts *Config) (*defaultRequester, error
 		transport := &http.Transport{Dial: unixDialer(opts.Socket), DisableKeepAlives: opts.DisableKeepAlive}
 		baseURL := &url.URL{Scheme: "http", Host: "localhost"}
 		requester = &defaultRequester{
-			baseURL:       baseURL,
-			transport:     transport,
-			basicUsername: opts.BasicUsername,
-			basicPassword: opts.BasicPassword,
+			baseURL:   baseURL,
+			transport: transport,
 		}
 	} else {
 		// Otherwise talk regular HTTP-over-TCP.
@@ -666,83 +661,32 @@ func newDefaultRequester(client *Client, opts *Config) (*defaultRequester, error
 		if err != nil {
 			return nil, fmt.Errorf("cannot parse base URL: %w", err)
 		}
-		transport := &http.Transport{
-			DisableKeepAlives: opts.DisableKeepAlive,
-			TLSClientConfig: &tls.Config{
-				// We disable the internal full X509 metadata based validation logic
-				// since the typical use-case do not have the server as a public URL
-				// baked into the certificate, signed with an external CA. The client
-				// config provides a TLSServerVerify hook that must be used to verify
-				// the server certificate chain.
-				InsecureSkipVerify: true,
-				VerifyConnection: func(state tls.ConnectionState) error {
-					return verifyConnection(state, opts)
-				},
-				// The server is configured to request a certificate from the client
-				// which will result in this hook getting called to retrieve it.
-				GetClientCertificate: func(request *tls.CertificateRequestInfo) (*tls.Certificate, error) {
-					return opts.TLSClientIDCert, nil
-				},
-			},
+
+		var transport *http.Transport
+		if baseURL.Scheme == "https" {
+			// HTTPS requires TLS configuration
+			transport, err = createTLSTransport(opts, baseURL)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			// Plain HTTP
+			transport = &http.Transport{DisableKeepAlives: opts.DisableKeepAlive}
 		}
+
 		requester = &defaultRequester{
-			baseURL:       baseURL,
-			transport:     transport,
-			basicUsername: opts.BasicUsername,
-			basicPassword: opts.BasicPassword,
+			baseURL:   baseURL,
+			transport: transport,
 		}
 	}
 
-	requester.doer = &http.Client{Transport: requester.transport}
+	requester.doer = createHTTPClient(requester.transport)
 	requester.userAgent = opts.UserAgent
 	requester.client = client
+	requester.basicUsername = opts.BasicUsername
+	requester.basicPassword = opts.BasicPassword
 
 	return requester, nil
-}
-
-// verifyConnection verifies the incoming server TLS certificate.
-func verifyConnection(state tls.ConnectionState, opts *Config) error {
-	// We always expect two certificates from our server:
-	//
-	// state.PeerCertificates[0] - server TLS certificate
-	// state.PeerCertificates[1] - server Identity certificate (root CA)
-	certCount := len(state.PeerCertificates)
-	if certCount != expectedServerCertCount {
-		return fmt.Errorf("cannot find identity certificate: expected %d certificates, got %d", expectedServerCertCount, certCount)
-	}
-	// Make a local copy of the server identity certificate (root CA).
-	serverIDCert := state.PeerCertificates[1]
-
-	if opts.TLSServerFingerprint != "" {
-		// Client supplied fingerprint must match the server identity.
-		idFingerprint, err := getIdentityFingerprint(serverIDCert)
-		if err != nil {
-			return fmt.Errorf("cannot obtain identity fingerprint: %v", err)
-		}
-		if idFingerprint == opts.TLSServerFingerprint {
-			// Fingerprint verification passed.
-			return nil
-		}
-		return errors.New("server fingerprint mismatch")
-
-	} else if opts.TLSServerIDCert != nil {
-		// Verify the incoming server TLS certificate with the pinned
-		// server identity certificate.
-		roots := x509.NewCertPool()
-		roots.AddCert(opts.TLSServerIDCert)
-		verifyOpts := x509.VerifyOptions{
-			Roots: roots,
-		}
-		incomingTLS := state.PeerCertificates[0]
-		_, err := incomingTLS.Verify(verifyOpts)
-		return err
-
-	} else if opts.TLSServerInsecure {
-		// Insecure server connection. Proceed with care.
-		return nil
-	}
-
-	return errors.New("cannot verify server: see TLS config options")
 }
 
 func (rq *defaultRequester) Transport() *http.Transport {
@@ -757,10 +701,7 @@ func (rq *defaultRequester) getWebsocket(urlPath string) (clientWebsocket, error
 		HandshakeTimeout: 5 * time.Second,
 	}
 
-	scheme := "ws"
-	if rq.baseURL.Scheme == "https" {
-		scheme = "wss"
-	}
+	scheme := websocketScheme(rq.baseURL.Scheme)
 	url := fmt.Sprintf("%s://%s%s", scheme, rq.baseURL.Host, urlPath)
 
 	r := http.Request{Header: make(http.Header)}
@@ -774,16 +715,4 @@ func (rq *defaultRequester) getWebsocket(urlPath string) (clientWebsocket, error
 		return conn, parseError(resp)
 	}
 	return conn, err
-}
-
-// getIdentityFingerprint extracts the public key from the certificate and
-// calculates the fingerprint.
-func getIdentityFingerprint(cert *x509.Certificate) (string, error) {
-	pubKey, ok := cert.PublicKey.(ed25519.PublicKey)
-	if !ok {
-		return "", errors.New("certificate must use Ed25519 public key")
-	}
-	hashBytes := sha512.Sum384(pubKey)
-	fingerprint := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(hashBytes[:])
-	return fingerprint, nil
 }

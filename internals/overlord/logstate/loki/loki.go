@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/canonical/pebble/internals/httputil"
 	"github.com/canonical/pebble/internals/logger"
 	"github.com/canonical/pebble/internals/servicelog"
 )
@@ -48,18 +49,24 @@ type Client struct {
 	labels map[string]json.RawMessage
 }
 
-func NewClient(options *ClientOptions) *Client {
+func NewClient(options *ClientOptions) (*Client, error) {
 	opts := *options
 	fillDefaultOptions(&opts)
+
+	// Validate URL in FIPS builds
+	if err := httputil.ValidateURL(opts.Location); err != nil {
+		return nil, fmt.Errorf("invalid location URL for target %q: %w", opts.TargetName, err)
+	}
+
 	c := &Client{
 		options:    &opts,
-		httpClient: &http.Client{Timeout: opts.RequestTimeout},
+		httpClient: httputil.NewClient(httputil.ClientOptions{Timeout: opts.RequestTimeout}),
 		buffer:     make([]entryWithService, 2*opts.MaxRequestEntries),
 		labels:     make(map[string]json.RawMessage),
 	}
 	// c.entries should be backed by the same array as c.buffer
 	c.entries = c.buffer[:0]
-	return c
+	return c, nil
 }
 
 // ClientOptions allows overriding default parameters (e.g. for testing)

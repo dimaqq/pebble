@@ -29,6 +29,38 @@ go install ./cmd/pebble
 
 However, during development it's easiest just to use `go run`, as that will automatically recompile if you've made any changes.
 
+### FIPS 140 builds
+
+Pebble supports building for FIPS 140 compliance using the `fips` build tag. When built with this tag:
+
+- The third-party `github.com/GehirnInc/crypt` library is excluded
+- Basic authentication is disabled (identity password check)
+- Certificate-based identities are disabled
+- HTTPS server support is blocked (the `--https` flag will return an error)
+- HTTPS client connections are blocked (API client, health checks, log forwarding)
+- HTTPS redirects are blocked (API client, health checks, log forwarding)
+- WSS (secure WebSocket) connections are not possible
+
+To build Pebble with FIPS compliance:
+
+```
+go build -tags=fips ./cmd/pebble
+```
+
+To run the Pebble daemon in FIPS mode during development:
+
+```
+go run -tags=fips ./cmd/pebble run
+```
+
+When running a FIPS build, only "local" (UID-based) identity authentication and HTTP-only communication is available.
+
+To run tests with FIPS mode enabled:
+
+```
+go test -tags=fips ./...
+```
+
 
 ## Running the daemon
 

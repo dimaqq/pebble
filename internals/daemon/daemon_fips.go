@@ -1,6 +1,6 @@
-//go:build !fips
+//go:build fips
 
-// Copyright (C) 2025 Canonical Ltd
+// Copyright (c) 2025 Canonical Ltd
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License version 3 as
@@ -14,17 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-package idkey_test
+package daemon
 
 import (
-	"testing"
-
-	. "gopkg.in/check.v1"
+	"fmt"
 )
 
-// Hook up check.v1 into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
-
-type keySuite struct{}
-
-var _ = Suite(&keySuite{})
+// initHTTPSListener blocks HTTPS listener creation in FIPS builds.
+func (d *Daemon) initHTTPSListener() error {
+	if d.options.HTTPSAddress != "" {
+		return fmt.Errorf("HTTPS server is not supported in FIPS builds")
+	}
+	return nil
+}

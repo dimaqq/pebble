@@ -1,6 +1,6 @@
 //go:build !fips
 
-// Copyright (C) 2025 Canonical Ltd
+// Copyright (c) 2024 Canonical Ltd
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License version 3 as
@@ -14,17 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-package idkey_test
+package httputil
 
 import (
-	"testing"
-
-	. "gopkg.in/check.v1"
+	"net/http"
 )
 
-// Hook up check.v1 into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
+// validateScheme allows both HTTP and HTTPS in non-FIPS builds.
+func validateScheme(scheme string) error {
+	// All schemes allowed in non-FIPS builds
+	return nil
+}
 
-type keySuite struct{}
-
-var _ = Suite(&keySuite{})
+// checkRedirectPolicy returns the default redirect policy (follow up to 10 redirects).
+func checkRedirectPolicy() func(*http.Request, []*http.Request) error {
+	// Use default behavior (nil means follow up to 10 redirects)
+	return nil
+}
